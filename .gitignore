@@ -178,3 +178,6 @@ $RECYCLE.BIN/
 *.temp
 *.bak
 *.orig
+
+# Drafts
+scratchpad.md

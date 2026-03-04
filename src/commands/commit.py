@@ -1,5 +1,8 @@
 import click
 import subprocess
+from typing import Any
+from litellm import completion
+from litellm import AuthenticationError
 
 
 COMMIT_MESSAGE_PROMPT = """You are an expert at writing clear, concise git commit messages following the Conventional Commits specification.
@@ -115,6 +118,53 @@ def get_staged_diff() -> str:
         raise RuntimeError("Git is not installed or not found in PATH")
 
 
+def generate_commit_message(prompt: str) -> str:
+    """Send the prompt to the LLM and return the generated commit message.
+
+    Args:
+        prompt: The formatted prompt containing the diff and instructions.
+
+    Returns:
+        The generated commit message.
+
+    Raises:
+        AuthenticationError: If the API key is invalid.
+        Exception: If the LLM call fails.
+    """
+    response: Any = completion(
+        model="openai/gpt-4o-mini",
+        messages=[
+            {
+                "role": "user",
+                "content": prompt
+            }
+        ],
+        temperature=0.2
+    )
+    return response.choices[0].message.content.strip()
+
+
+def run_git_commit(message: str) -> None:
+    """Execute git commit with the given message.
+
+    Args:
+        message: The commit message.
+
+    Raises:
+        RuntimeError: If the git commit fails.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "commit", "-m", message],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        click.echo(result.stdout)
+    except subprocess.CalledProcessError as e:
+        raise RuntimeError(f"Git commit failed: {e.stderr}") from e
+
+
 @click.command()
 def commit():
     """Generate a commit message based on staged changes."""
@@ -123,8 +173,27 @@ def commit():
         if not diff:
             click.echo("No staged changes found. Stage your changes with 'git add' first.")
             return
+
         commit_prompt = COMMIT_MESSAGE_PROMPT.format(diff=diff)
-        click.echo("\n[commit] Commit message prompt:")
-        click.echo(commit_prompt)
+        click.echo("Generating commit message, please hold...")
+
+        message = generate_commit_message(commit_prompt)
+
+        click.echo("\n" + "=" * 50)
+        click.echo("Generated commit message:")
+        click.echo("=" * 50)
+        click.echo(message)
+        click.echo("=" * 50 + "\n")
+
+        if click.confirm("Accept and commit this message?"):
+            run_git_commit(message)
+            click.echo("Commit successful!")
+        else:
+            click.echo("Aborted.")
+
+    except AuthenticationError:
+        click.echo("Authentication failed. Check your API key.", err=True)
     except RuntimeError as e:
         click.echo(f"Error: {e}", err=True)
+    except Exception as e:
+        click.echo(f"Error generating commit message: {e}", err=True)
