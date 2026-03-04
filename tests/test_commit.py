@@ -98,6 +98,41 @@ class TestGenerateCommitMessage:
 
         assert result == "feat: add feature"
 
+    @patch("commands.commit.completion")
+    def test_passes_multi_turn_conversation(self, mock_completion):
+        """Test that generate_commit_message passes full conversation history."""
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = "fix: adjusted message"
+        mock_completion.return_value = mock_response
+
+        messages = [
+            {"role": "user", "content": "initial prompt"},
+            {"role": "assistant", "content": "feat: first attempt"},
+            {"role": "user", "content": "make it a fix"},
+        ]
+        result = generate_commit_message(messages)
+
+        assert result == "fix: adjusted message"
+        mock_completion.assert_called_once_with(
+            model="openai/gpt-4o-mini",
+            messages=messages,
+            temperature=0.2
+        )
+
+    @patch("commands.commit.completion")
+    def test_raises_authentication_error(self, mock_completion):
+        """Test that AuthenticationError propagates from completion."""
+        mock_completion.side_effect = AuthenticationError(
+            message="Invalid API key",
+            llm_provider="openai",
+            model="gpt-4o-mini"
+        )
+
+        messages = [{"role": "user", "content": "test prompt"}]
+        with pytest.raises(AuthenticationError):
+            generate_commit_message(messages)
+
 
 class TestRunGitCommit:
     """Tests for the run_git_commit function."""
@@ -241,3 +276,47 @@ class TestCommitCommand:
         result = runner.invoke(commit, input="a")
 
         assert "Error: Git commit failed" in result.output
+
+    @patch("commands.commit.generate_commit_message")
+    @patch("commands.commit.get_staged_diff")
+    def test_commit_handles_generic_llm_exception(self, mock_get_diff, mock_generate, runner):
+        """Test commit command handles generic LLM exceptions gracefully."""
+        mock_get_diff.return_value = "diff --git a/file.py\n+new line"
+        mock_generate.side_effect = Exception("Network timeout")
+
+        result = runner.invoke(commit)
+
+        assert "Error generating commit message: Network timeout" in result.output
+
+    @patch("commands.commit.run_git_commit")
+    @patch("commands.commit.generate_commit_message")
+    @patch("commands.commit.get_staged_diff")
+    def test_commit_builds_messages_list_on_adjust(self, mock_get_diff, mock_generate, mock_run_commit, runner):
+        """Test that messages list accumulates correctly during adjustments."""
+        mock_get_diff.return_value = "diff content"
+
+        # Capture the messages at each call
+        captured_messages = []
+        def capture_messages(messages):
+            # Store a copy of the messages list at call time
+            captured_messages.append([m.copy() for m in messages])
+            return ["first message", "second message"][len(captured_messages) - 1]
+
+        mock_generate.side_effect = capture_messages
+
+        runner.invoke(commit, input="e\nadd more detail\na")
+
+        # Verify two calls were made
+        assert len(captured_messages) == 2
+
+        # First call: just the initial prompt
+        assert len(captured_messages[0]) == 1
+        assert captured_messages[0][0]["role"] == "user"
+
+        # Second call: initial + assistant response + user feedback
+        assert len(captured_messages[1]) == 3
+        assert captured_messages[1][0]["role"] == "user"
+        assert captured_messages[1][1]["role"] == "assistant"
+        assert captured_messages[1][1]["content"] == "first message"
+        assert captured_messages[1][2]["role"] == "user"
+        assert captured_messages[1][2]["content"] == "add more detail"
