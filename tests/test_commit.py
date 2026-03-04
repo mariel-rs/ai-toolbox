@@ -75,8 +75,8 @@ class TestCommitCommand:
         result = runner.invoke(commit)
 
         assert result.exit_code == 0
-        assert "Staged changes retrieved successfully" in result.output
-        assert "Diff length:" in result.output
+        assert "[commit] Commit message prompt:" in result.output
+        assert "diff --git a/file.py" in result.output
 
     @patch("commands.commit.get_staged_diff")
     def test_commit_with_no_staged_changes(self, mock_get_diff, runner):
