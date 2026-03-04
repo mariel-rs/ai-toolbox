@@ -1,3 +1,4 @@
+import logging
 import click
 from typing import Any
 from textwrap import dedent
@@ -9,11 +10,33 @@ from commands.commit import commit
 # Load environment variables from .env file
 load_dotenv(override=True)
 
+# Configure logging
+logger = logging.getLogger(__name__)
+
+
+def configure_logging(verbose: bool) -> None:
+    """Configure logging for the application.
+
+    Args:
+        verbose: If True, set log level to DEBUG; otherwise WARNING.
+    """
+    level = logging.DEBUG if verbose else logging.WARNING
+    logging.basicConfig(
+        level=level,
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+    logger.debug("Logging configured with level: %s", logging.getLevelName(level))
+
 
 @click.group()
-def cli():
+@click.option("-v", "--verbose", is_flag=True, help="Enable debug logging.")
+@click.pass_context
+def cli(ctx: click.Context, verbose: bool) -> None:
     """AI Toolbox - A command-line tool for AI utilities."""
-    pass
+    ctx.ensure_object(dict)
+    ctx.obj["verbose"] = verbose
+    configure_logging(verbose)
 
 
 @click.command()
