@@ -6,6 +6,9 @@ from commands.commit import commit, get_staged_diff, generate_commit_message, ru
 from litellm import AuthenticationError
 
 
+DEFAULT_MODEL = "openai/gpt-4o-mini"
+
+
 @pytest.fixture
 def runner():
     """Create a CLI test runner."""
@@ -76,11 +79,11 @@ class TestGenerateCommitMessage:
         mock_completion.return_value = mock_response
 
         messages = [{"role": "user", "content": "test prompt"}]
-        result = generate_commit_message(messages)
+        result = generate_commit_message(messages, DEFAULT_MODEL)
 
         assert result == "feat(api): add new endpoint"
         mock_completion.assert_called_once_with(
-            model="openai/gpt-4o-mini",
+            model=DEFAULT_MODEL,
             messages=messages,
             temperature=0.2
         )
@@ -94,7 +97,7 @@ class TestGenerateCommitMessage:
         mock_completion.return_value = mock_response
 
         messages = [{"role": "user", "content": "test prompt"}]
-        result = generate_commit_message(messages)
+        result = generate_commit_message(messages, DEFAULT_MODEL)
 
         assert result == "feat: add feature"
 
@@ -111,11 +114,11 @@ class TestGenerateCommitMessage:
             {"role": "assistant", "content": "feat: first attempt"},
             {"role": "user", "content": "make it a fix"},
         ]
-        result = generate_commit_message(messages)
+        result = generate_commit_message(messages, DEFAULT_MODEL)
 
         assert result == "fix: adjusted message"
         mock_completion.assert_called_once_with(
-            model="openai/gpt-4o-mini",
+            model=DEFAULT_MODEL,
             messages=messages,
             temperature=0.2
         )
@@ -131,7 +134,7 @@ class TestGenerateCommitMessage:
 
         messages = [{"role": "user", "content": "test prompt"}]
         with pytest.raises(AuthenticationError):
-            generate_commit_message(messages)
+            generate_commit_message(messages, DEFAULT_MODEL)
 
 
 class TestRunGitCommit:
@@ -169,15 +172,20 @@ class TestRunGitCommit:
 class TestCommitCommand:
     """Tests for the commit CLI command."""
 
+    @pytest.fixture
+    def ctx_obj(self):
+        """Create a context object with default model."""
+        return {"model": DEFAULT_MODEL}
+
     @patch("commands.commit.run_git_commit")
     @patch("commands.commit.generate_commit_message")
     @patch("commands.commit.get_staged_diff")
-    def test_commit_approved(self, mock_get_diff, mock_generate, mock_run_commit, runner):
+    def test_commit_approved(self, mock_get_diff, mock_generate, mock_run_commit, runner, ctx_obj):
         """Test commit command when user approves the generated message."""
         mock_get_diff.return_value = "diff --git a/file.py\n+new line"
         mock_generate.return_value = "feat(test): add new feature"
 
-        result = runner.invoke(commit, input="a")
+        result = runner.invoke(commit, input="a", obj=ctx_obj)
 
         assert result.exit_code == 0
         assert "Generating commit message, please hold..." in result.output
@@ -188,12 +196,12 @@ class TestCommitCommand:
     @patch("commands.commit.run_git_commit")
     @patch("commands.commit.generate_commit_message")
     @patch("commands.commit.get_staged_diff")
-    def test_commit_rejected(self, mock_get_diff, mock_generate, mock_run_commit, runner):
+    def test_commit_rejected(self, mock_get_diff, mock_generate, mock_run_commit, runner, ctx_obj):
         """Test commit command when user rejects the generated message."""
         mock_get_diff.return_value = "diff --git a/file.py\n+new line"
         mock_generate.return_value = "feat(test): add new feature"
 
-        result = runner.invoke(commit, input="r")
+        result = runner.invoke(commit, input="r", obj=ctx_obj)
 
         assert result.exit_code == 0
         assert "Aborted." in result.output
@@ -202,12 +210,12 @@ class TestCommitCommand:
     @patch("commands.commit.run_git_commit")
     @patch("commands.commit.generate_commit_message")
     @patch("commands.commit.get_staged_diff")
-    def test_commit_adjusted_then_approved(self, mock_get_diff, mock_generate, mock_run_commit, runner):
+    def test_commit_adjusted_then_approved(self, mock_get_diff, mock_generate, mock_run_commit, runner, ctx_obj):
         """Test commit command when user adjusts then approves."""
         mock_get_diff.return_value = "diff --git a/file.py\n+new line"
         mock_generate.side_effect = ["feat(test): initial message", "fix(test): adjusted message"]
 
-        result = runner.invoke(commit, input="e\nmake it a fix instead\na")
+        result = runner.invoke(commit, input="e\nmake it a fix instead\na", obj=ctx_obj)
 
         assert result.exit_code == 0
         assert "feat(test): initial message" in result.output
@@ -219,39 +227,39 @@ class TestCommitCommand:
     @patch("commands.commit.run_git_commit")
     @patch("commands.commit.generate_commit_message")
     @patch("commands.commit.get_staged_diff")
-    def test_commit_adjusted_then_rejected(self, mock_get_diff, mock_generate, mock_run_commit, runner):
+    def test_commit_adjusted_then_rejected(self, mock_get_diff, mock_generate, mock_run_commit, runner, ctx_obj):
         """Test commit command when user adjusts then rejects."""
         mock_get_diff.return_value = "diff --git a/file.py\n+new line"
         mock_generate.side_effect = ["feat(test): initial message", "fix(test): adjusted message"]
 
-        result = runner.invoke(commit, input="e\nmake it a fix\nr")
+        result = runner.invoke(commit, input="e\nmake it a fix\nr", obj=ctx_obj)
 
         assert result.exit_code == 0
         assert "Aborted." in result.output
         mock_run_commit.assert_not_called()
 
     @patch("commands.commit.get_staged_diff")
-    def test_commit_with_no_staged_changes(self, mock_get_diff, runner):
+    def test_commit_with_no_staged_changes(self, mock_get_diff, runner, ctx_obj):
         """Test commit command when there are no staged changes."""
         mock_get_diff.return_value = ""
 
-        result = runner.invoke(commit)
+        result = runner.invoke(commit, obj=ctx_obj)
 
         assert result.exit_code == 0
         assert "No staged changes found" in result.output
 
     @patch("commands.commit.get_staged_diff")
-    def test_commit_handles_runtime_error(self, mock_get_diff, runner):
+    def test_commit_handles_runtime_error(self, mock_get_diff, runner, ctx_obj):
         """Test commit command handles RuntimeError gracefully."""
         mock_get_diff.side_effect = RuntimeError("Not a git repository")
 
-        result = runner.invoke(commit)
+        result = runner.invoke(commit, obj=ctx_obj)
 
         assert "Error: Not a git repository" in result.output
 
     @patch("commands.commit.generate_commit_message")
     @patch("commands.commit.get_staged_diff")
-    def test_commit_handles_authentication_error(self, mock_get_diff, mock_generate, runner):
+    def test_commit_handles_authentication_error(self, mock_get_diff, mock_generate, runner, ctx_obj):
         """Test commit command handles AuthenticationError gracefully."""
         mock_get_diff.return_value = "diff --git a/file.py\n+new line"
         mock_generate.side_effect = AuthenticationError(
@@ -260,51 +268,51 @@ class TestCommitCommand:
             model="gpt-4o-mini"
         )
 
-        result = runner.invoke(commit)
+        result = runner.invoke(commit, obj=ctx_obj)
 
         assert "Authentication failed" in result.output
 
     @patch("commands.commit.run_git_commit")
     @patch("commands.commit.generate_commit_message")
     @patch("commands.commit.get_staged_diff")
-    def test_commit_handles_git_commit_failure(self, mock_get_diff, mock_generate, mock_run_commit, runner):
+    def test_commit_handles_git_commit_failure(self, mock_get_diff, mock_generate, mock_run_commit, runner, ctx_obj):
         """Test commit command handles git commit failure gracefully."""
         mock_get_diff.return_value = "diff --git a/file.py\n+new line"
         mock_generate.return_value = "feat: test"
         mock_run_commit.side_effect = RuntimeError("Git commit failed: nothing to commit")
 
-        result = runner.invoke(commit, input="a")
+        result = runner.invoke(commit, input="a", obj=ctx_obj)
 
         assert "Error: Git commit failed" in result.output
 
     @patch("commands.commit.generate_commit_message")
     @patch("commands.commit.get_staged_diff")
-    def test_commit_handles_generic_llm_exception(self, mock_get_diff, mock_generate, runner):
+    def test_commit_handles_generic_llm_exception(self, mock_get_diff, mock_generate, runner, ctx_obj):
         """Test commit command handles generic LLM exceptions gracefully."""
         mock_get_diff.return_value = "diff --git a/file.py\n+new line"
         mock_generate.side_effect = Exception("Network timeout")
 
-        result = runner.invoke(commit)
+        result = runner.invoke(commit, obj=ctx_obj)
 
         assert "Error generating commit message: Network timeout" in result.output
 
     @patch("commands.commit.run_git_commit")
     @patch("commands.commit.generate_commit_message")
     @patch("commands.commit.get_staged_diff")
-    def test_commit_builds_messages_list_on_adjust(self, mock_get_diff, mock_generate, mock_run_commit, runner):
+    def test_commit_builds_messages_list_on_adjust(self, mock_get_diff, mock_generate, mock_run_commit, runner, ctx_obj):
         """Test that messages list accumulates correctly during adjustments."""
         mock_get_diff.return_value = "diff content"
 
         # Capture the messages at each call
         captured_messages = []
-        def capture_messages(messages):
+        def capture_messages(messages, model):
             # Store a copy of the messages list at call time
             captured_messages.append([m.copy() for m in messages])
             return ["first message", "second message"][len(captured_messages) - 1]
 
         mock_generate.side_effect = capture_messages
 
-        runner.invoke(commit, input="e\nadd more detail\na")
+        runner.invoke(commit, input="e\nadd more detail\na", obj=ctx_obj)
 
         # Verify two calls were made
         assert len(captured_messages) == 2

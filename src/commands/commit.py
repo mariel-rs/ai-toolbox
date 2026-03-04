@@ -125,11 +125,12 @@ def get_staged_diff() -> str:
         raise RuntimeError("Git is not installed or not found in PATH")
 
 
-def generate_commit_message(messages: list[dict[str, str]]) -> str:
+def generate_commit_message(messages: list[dict[str, str]], model: str) -> str:
     """Send the messages to the LLM and return the generated commit message.
 
     Args:
         messages: The conversation history including the prompt and any adjustments.
+        model: The LLM model identifier to use.
 
     Returns:
         The generated commit message.
@@ -138,10 +139,10 @@ def generate_commit_message(messages: list[dict[str, str]]) -> str:
         AuthenticationError: If the API key is invalid.
         Exception: If the LLM call fails.
     """
-    logger.debug("Calling LLM with %d messages", len(messages))
+    logger.debug("Calling LLM model %s with %d messages", model, len(messages))
     logger.debug("Messages: %s", messages)
     response: Any = completion(
-        model="openai/gpt-4o-mini",
+        model=model,
         messages=messages,
         temperature=0.2
     )
@@ -200,9 +201,11 @@ def prompt_user_choice() -> str:
 
 
 @click.command()
-def commit() -> None:
+@click.pass_context
+def commit(ctx: click.Context) -> None:
     """Generate a commit message based on staged changes."""
-    logger.info("Starting commit command")
+    model: str = ctx.obj.get("model", "openai/gpt-4o-mini")
+    logger.info("Starting commit command with model: %s", model)
     try:
         diff = get_staged_diff()
         if not diff:
@@ -215,7 +218,7 @@ def commit() -> None:
         messages: list[dict[str, str]] = [{"role": "user", "content": commit_prompt}]
 
         click.echo("Generating commit message, please hold...")
-        message = generate_commit_message(messages)
+        message = generate_commit_message(messages, model)
         messages.append({"role": "assistant", "content": message})
         logger.info("Initial commit message generated")
 
@@ -238,7 +241,7 @@ def commit() -> None:
                 logger.debug("User feedback: %s", feedback)
                 messages.append({"role": "user", "content": feedback})
                 click.echo("Regenerating commit message, please hold...")
-                message = generate_commit_message(messages)
+                message = generate_commit_message(messages, model)
                 messages.append({"role": "assistant", "content": message})
                 logger.info("Commit message regenerated after adjustment")
             else:  # abort

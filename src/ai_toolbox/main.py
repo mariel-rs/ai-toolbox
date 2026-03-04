@@ -29,14 +29,20 @@ def configure_logging(verbose: bool) -> None:
     logger.debug("Logging configured with level: %s", logging.getLevelName(level))
 
 
+DEFAULT_MODEL = "openai/gpt-4o-mini"
+
+
 @click.group()
 @click.option("-v", "--verbose", is_flag=True, help="Enable debug logging.")
+@click.option("-m", "--model", default=DEFAULT_MODEL, help="LLM model to use.")
 @click.pass_context
-def cli(ctx: click.Context, verbose: bool) -> None:
+def cli(ctx: click.Context, verbose: bool, model: str) -> None:
     """AI Toolbox - A command-line tool for AI utilities."""
     ctx.ensure_object(dict)
     ctx.obj["verbose"] = verbose
+    ctx.obj["model"] = model
     configure_logging(verbose)
+    logger.debug("Using model: %s", model)
 
 
 @click.command()
