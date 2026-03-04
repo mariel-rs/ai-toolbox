@@ -118,11 +118,11 @@ def get_staged_diff() -> str:
         raise RuntimeError("Git is not installed or not found in PATH")
 
 
-def generate_commit_message(prompt: str) -> str:
-    """Send the prompt to the LLM and return the generated commit message.
+def generate_commit_message(messages: list[dict[str, str]]) -> str:
+    """Send the messages to the LLM and return the generated commit message.
 
     Args:
-        prompt: The formatted prompt containing the diff and instructions.
+        messages: The conversation history including the prompt and any adjustments.
 
     Returns:
         The generated commit message.
@@ -133,12 +133,7 @@ def generate_commit_message(prompt: str) -> str:
     """
     response: Any = completion(
         model="openai/gpt-4o-mini",
-        messages=[
-            {
-                "role": "user",
-                "content": prompt
-            }
-        ],
+        messages=messages,
         temperature=0.2
     )
     return response.choices[0].message.content.strip()
@@ -165,6 +160,25 @@ def run_git_commit(message: str) -> None:
         raise RuntimeError(f"Git commit failed: {e.stderr}") from e
 
 
+def prompt_user_choice() -> str:
+    """Prompt the user to approve, adjust, or abort the commit message.
+
+    Returns:
+        The user's choice: 'approve', 'adjust', or 'abort'.
+    """
+    click.echo("[A]pprove  [E]dit  [R]eject")
+    while True:
+        choice = click.getchar().lower()
+        if choice == 'a':
+            return 'approve'
+        elif choice == 'e':
+            return 'adjust'
+        elif choice == 'r':
+            return 'abort'
+        else:
+            click.echo("Invalid choice. Press A to approve, E to edit, or R to reject.")
+
+
 @click.command()
 def commit():
     """Generate a commit message based on staged changes."""
@@ -175,21 +189,34 @@ def commit():
             return
 
         commit_prompt = COMMIT_MESSAGE_PROMPT.format(diff=diff)
+        messages: list[dict[str, str]] = [{"role": "user", "content": commit_prompt}]
+
         click.echo("Generating commit message, please hold...")
+        message = generate_commit_message(messages)
+        messages.append({"role": "assistant", "content": message})
 
-        message = generate_commit_message(commit_prompt)
+        while True:
+            click.echo("\n" + "=" * 50)
+            click.echo("Generated commit message:")
+            click.echo("=" * 50)
+            click.echo(message)
+            click.echo("=" * 50 + "\n")
 
-        click.echo("\n" + "=" * 50)
-        click.echo("Generated commit message:")
-        click.echo("=" * 50)
-        click.echo(message)
-        click.echo("=" * 50 + "\n")
+            choice = prompt_user_choice()
 
-        if click.confirm("Accept and commit this message?"):
-            run_git_commit(message)
-            click.echo("Commit successful!")
-        else:
-            click.echo("Aborted.")
+            if choice == 'approve':
+                run_git_commit(message)
+                click.echo("Commit successful!")
+                break
+            elif choice == 'adjust':
+                feedback = click.prompt("Describe the changes you want")
+                messages.append({"role": "user", "content": feedback})
+                click.echo("Regenerating commit message, please hold...")
+                message = generate_commit_message(messages)
+                messages.append({"role": "assistant", "content": message})
+            else:  # abort
+                click.echo("Aborted.")
+                break
 
     except AuthenticationError:
         click.echo("Authentication failed. Check your API key.", err=True)

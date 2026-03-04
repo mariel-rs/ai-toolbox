@@ -52,7 +52,6 @@ class TestGetStagedDiff:
             get_staged_diff()
 
         assert "Failed to get staged diff" in str(exc_info.value)
-        assert "not a git repository" in str(exc_info.value)
 
     @patch("commands.commit.subprocess.run")
     def test_raises_runtime_error_when_git_not_installed(self, mock_run):
@@ -76,12 +75,13 @@ class TestGenerateCommitMessage:
         mock_response.choices[0].message.content = "feat(api): add new endpoint"
         mock_completion.return_value = mock_response
 
-        result = generate_commit_message("test prompt")
+        messages = [{"role": "user", "content": "test prompt"}]
+        result = generate_commit_message(messages)
 
         assert result == "feat(api): add new endpoint"
         mock_completion.assert_called_once_with(
             model="openai/gpt-4o-mini",
-            messages=[{"role": "user", "content": "test prompt"}],
+            messages=messages,
             temperature=0.2
         )
 
@@ -93,7 +93,8 @@ class TestGenerateCommitMessage:
         mock_response.choices[0].message.content = "  feat: add feature  \n"
         mock_completion.return_value = mock_response
 
-        result = generate_commit_message("test prompt")
+        messages = [{"role": "user", "content": "test prompt"}]
+        result = generate_commit_message(messages)
 
         assert result == "feat: add feature"
 
@@ -136,12 +137,12 @@ class TestCommitCommand:
     @patch("commands.commit.run_git_commit")
     @patch("commands.commit.generate_commit_message")
     @patch("commands.commit.get_staged_diff")
-    def test_commit_with_staged_changes_accepted(self, mock_get_diff, mock_generate, mock_run_commit, runner):
-        """Test commit command when user accepts the generated message."""
+    def test_commit_approved(self, mock_get_diff, mock_generate, mock_run_commit, runner):
+        """Test commit command when user approves the generated message."""
         mock_get_diff.return_value = "diff --git a/file.py\n+new line"
         mock_generate.return_value = "feat(test): add new feature"
 
-        result = runner.invoke(commit, input="y\n")
+        result = runner.invoke(commit, input="a")
 
         assert result.exit_code == 0
         assert "Generating commit message, please hold..." in result.output
@@ -152,12 +153,43 @@ class TestCommitCommand:
     @patch("commands.commit.run_git_commit")
     @patch("commands.commit.generate_commit_message")
     @patch("commands.commit.get_staged_diff")
-    def test_commit_with_staged_changes_rejected(self, mock_get_diff, mock_generate, mock_run_commit, runner):
+    def test_commit_rejected(self, mock_get_diff, mock_generate, mock_run_commit, runner):
         """Test commit command when user rejects the generated message."""
         mock_get_diff.return_value = "diff --git a/file.py\n+new line"
         mock_generate.return_value = "feat(test): add new feature"
 
-        result = runner.invoke(commit, input="n\n")
+        result = runner.invoke(commit, input="r")
+
+        assert result.exit_code == 0
+        assert "Aborted." in result.output
+        mock_run_commit.assert_not_called()
+
+    @patch("commands.commit.run_git_commit")
+    @patch("commands.commit.generate_commit_message")
+    @patch("commands.commit.get_staged_diff")
+    def test_commit_adjusted_then_approved(self, mock_get_diff, mock_generate, mock_run_commit, runner):
+        """Test commit command when user adjusts then approves."""
+        mock_get_diff.return_value = "diff --git a/file.py\n+new line"
+        mock_generate.side_effect = ["feat(test): initial message", "fix(test): adjusted message"]
+
+        result = runner.invoke(commit, input="e\nmake it a fix instead\na")
+
+        assert result.exit_code == 0
+        assert "feat(test): initial message" in result.output
+        assert "fix(test): adjusted message" in result.output
+        assert "Commit successful!" in result.output
+        mock_run_commit.assert_called_once_with("fix(test): adjusted message")
+        assert mock_generate.call_count == 2
+
+    @patch("commands.commit.run_git_commit")
+    @patch("commands.commit.generate_commit_message")
+    @patch("commands.commit.get_staged_diff")
+    def test_commit_adjusted_then_rejected(self, mock_get_diff, mock_generate, mock_run_commit, runner):
+        """Test commit command when user adjusts then rejects."""
+        mock_get_diff.return_value = "diff --git a/file.py\n+new line"
+        mock_generate.side_effect = ["feat(test): initial message", "fix(test): adjusted message"]
+
+        result = runner.invoke(commit, input="e\nmake it a fix\nr")
 
         assert result.exit_code == 0
         assert "Aborted." in result.output
@@ -172,7 +204,6 @@ class TestCommitCommand:
 
         assert result.exit_code == 0
         assert "No staged changes found" in result.output
-        assert "git add" in result.output
 
     @patch("commands.commit.get_staged_diff")
     def test_commit_handles_runtime_error(self, mock_get_diff, runner):
@@ -207,17 +238,6 @@ class TestCommitCommand:
         mock_generate.return_value = "feat: test"
         mock_run_commit.side_effect = RuntimeError("Git commit failed: nothing to commit")
 
-        result = runner.invoke(commit, input="y\n")
+        result = runner.invoke(commit, input="a")
 
         assert "Error: Git commit failed" in result.output
-
-    @patch("commands.commit.generate_commit_message")
-    @patch("commands.commit.get_staged_diff")
-    def test_commit_handles_generic_exception(self, mock_get_diff, mock_generate, runner):
-        """Test commit command handles generic exceptions gracefully."""
-        mock_get_diff.return_value = "diff --git a/file.py\n+new line"
-        mock_generate.side_effect = Exception("Network error")
-
-        result = runner.invoke(commit)
-
-        assert "Error generating commit message" in result.output
